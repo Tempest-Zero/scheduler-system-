@@ -7,6 +7,10 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 from .client import get_initialized_client
 
+# Re-exported so callers can keep importing it from this module.
+# The single correct implementation lives in pattern_extractor.
+from .pattern_extractor import patterns_to_constraints  # noqa: F401
+
 # Configuration
 CACHE_TTL_SECONDS = 300  # 5 minutes
 RECONNECT_INTERVAL_SECONDS = 60  # Wait before retrying connection
@@ -254,39 +258,4 @@ class ResilientGraphitiClient:
 
 # Singleton instance
 resilient_client = ResilientGraphitiClient()
-
-
-def patterns_to_constraints(patterns: dict) -> dict:
-    """
-    Convert patterns to solver constraint format.
-    
-    Args:
-        patterns: {avoided_times: {task: [hours]}, time_preferences: {task: [hours]}}
-    
-    Returns:
-        {avoid_time_slots: [(task, start_h, end_h, weight)], prefer_time_slots: [...]}
-    """
-    constraints = {
-        "avoid_time_slots": [],
-        "prefer_time_slots": []
-    }
-    
-    BASE_AVOID_WEIGHT = 200
-    BASE_PREFER_WEIGHT = -100
-    
-    for task, hours in patterns.get("avoided_times", {}).items():
-        count = len(hours)
-        # More occurrences = stronger signal (caps at 1000)
-        weight = min(BASE_AVOID_WEIGHT * count, 1000)
-        for hour in set(hours):  # Deduplicate
-            constraints["avoid_time_slots"].append((task, hour, hour + 1, weight))
-    
-    for task, hours in patterns.get("time_preferences", {}).items():
-        count = len(hours)
-        # More occurrences = stronger bonus (caps at -500)
-        weight = max(BASE_PREFER_WEIGHT * count, -500)
-        for hour in set(hours):
-            constraints["prefer_time_slots"].append((task, hour, hour + 1, weight))
-    
-    return constraints
 

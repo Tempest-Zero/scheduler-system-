@@ -45,52 +45,74 @@ MAX_MORNING_ROUTINE_MINUTES = 45
 MAX_BREAK_MINUTES = 90
 
 
+def _realistic_duration(estimated_hours: float) -> int:
+    """Minutes a task occupies before mood adjustment.
+
+    Single source of truth for the realism factor + context-switch buffer, so
+    the feasibility pre-check and the solver agree on how much time a task
+    really costs.
+    """
+    raw = int(estimated_hours * 60)
+    return int(raw * REALISM_FACTOR) + BUFFER_MINUTES
+
+
 def generate_schedule(request: ScheduleRequest, learned_constraints: dict = None) -> ScheduleResponse:
     """
     Generate an optimized schedule from the request.
-    
+
+    Tries to schedule every task. If the day is over-constrained, the
+    least-important tasks (latest deadline, lowest priority) are dropped one
+    at a time until a schedule is found, and reported as overflow. The solver
+    itself is the source of truth for feasibility - a static capacity estimate
+    cannot account for fragmentation by fixed slots, deadlines or buffers.
+
     Args:
         request: ScheduleRequest with tasks, fixed slots, and preferences
         learned_constraints: Optional dict with avoid_time_slots and prefer_time_slots
             from user edit history
-        
+
     Returns:
         ScheduleResponse with status and scheduled blocks
     """
     # Auto-insert lunch if window spans noon
     _auto_insert_lunch(request)
-    
+
     # Parse day boundaries
     day_start = time_to_minutes(request.day_start_time)
     day_end = time_to_minutes(request.day_end_time)
     DAY_END = day_end - day_start
-    
-    # Check feasibility first - identify overflow tasks
-    available_minutes = DAY_END - sum(
-        time_to_minutes(s.end_time) - time_to_minutes(s.start_time)
-        for s in request.fixed_slots
+
+    # First attempt: schedule the full task set.
+    result = _solve_schedule(request, day_start, DAY_END, learned_constraints)
+    if result.status in ("optimal", "feasible"):
+        return result
+
+    # Over-constrained: drop the least-important task and retry until it fits.
+    ordered = sorted(
+        request.tasks,
+        key=lambda t: (t.deadline, {"high": 0, "medium": 1, "low": 2}[t.priority]),
     )
-    total_task_minutes = sum(int(t.estimated_time_hours * 60) for t in request.tasks)
-    
-    if total_task_minutes > available_minutes:
-        fittable, overflow = _identify_overflow_tasks(request, available_minutes)
-        if fittable:
-            # Try to schedule just the fittable tasks
-            partial_request = ScheduleRequest(
-                tasks=fittable,
-                fixed_slots=request.fixed_slots,
-                preferences=request.preferences,
-                day_start_time=request.day_start_time,
-                day_end_time=request.day_end_time,
-                date=request.date
-            )
-            result = _solve_schedule(partial_request, day_start, DAY_END, learned_constraints)
+    overflow = []
+
+    while len(ordered) > 1:
+        overflow.insert(0, ordered.pop())  # remove least-important task
+        partial_request = ScheduleRequest(
+            tasks=list(ordered),
+            fixed_slots=request.fixed_slots,
+            preferences=request.preferences,
+            day_start_time=request.day_start_time,
+            day_end_time=request.day_end_time,
+            date=request.date,
+        )
+        result = _solve_schedule(partial_request, day_start, DAY_END, learned_constraints)
+        if result.status in ("optimal", "feasible"):
             result.status = "partial"
             result.overflow_tasks = [t.name for t in overflow]
             result.error = f"Moved {len(overflow)} task(s) to tomorrow due to time constraints"
             return result
-    
-    return _solve_schedule(request, day_start, DAY_END, learned_constraints)
+
+    # Not even a single task fits - return the honest infeasible result.
+    return result
 
 
 def _solve_schedule(request: ScheduleRequest, day_start: int, DAY_END: int, learned_constraints: dict = None) -> ScheduleResponse:
@@ -107,7 +129,7 @@ def _solve_schedule(request: ScheduleRequest, day_start: int, DAY_END: int, lear
         
         # Apply 20% realism factor - tasks take longer than estimated
         raw_duration = int(task.estimated_time_hours * 60)
-        realistic_duration = int(raw_duration * REALISM_FACTOR) + BUFFER_MINUTES
+        realistic_duration = _realistic_duration(task.estimated_time_hours)
         
         # Handle optional tasks
         priority = task.priority
@@ -329,31 +351,6 @@ def _inject_breaks(blocks: list, day_start: int, min_break_minutes: int = 15) ->
                     ))
     
     return result
-
-
-def _identify_overflow_tasks(request: ScheduleRequest, available_minutes: int):
-    """Split tasks into fittable and overflow based on priority/deadline."""
-    sorted_tasks = sorted(
-        request.tasks,
-        key=lambda t: (
-            t.deadline,
-            {"high": 0, "medium": 1, "low": 2}[t.priority],
-        )
-    )
-    
-    fittable = []
-    overflow = []
-    used_minutes = 0
-    
-    for task in sorted_tasks:
-        task_minutes = int(task.estimated_time_hours * 60)
-        if used_minutes + task_minutes <= available_minutes:
-            fittable.append(task)
-            used_minutes += task_minutes
-        else:
-            overflow.append(task)
-    
-    return fittable, overflow
 
 
 def _auto_insert_lunch(request: ScheduleRequest) -> None:

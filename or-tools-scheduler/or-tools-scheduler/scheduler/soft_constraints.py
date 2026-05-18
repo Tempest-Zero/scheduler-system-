@@ -12,6 +12,9 @@ ENERGY_PEAK_HOURS = {
 PRIORITY_WEIGHT = {"high": 300, "medium": 100, "low": 30}
 DIFFICULTY_WEIGHT = {"hard": 200, "medium": 50, "easy": 0}
 
+# Mood scales how long tasks are expected to take (low mood = slower).
+MOOD_MULTIPLIER = {"high": 0.9, "normal": 1.0, "low": 1.2}
+
 
 def build_soft_penalties(
     model: cp_model.CpModel,
@@ -83,7 +86,7 @@ def build_soft_penalties(
 
 def apply_mood_adjustment(tasks: list[dict], mood: str) -> None:
     """Adjust task durations based on mood (in-place)."""
-    multiplier = {"high": 0.9, "normal": 1.0, "low": 1.2}[mood]
+    multiplier = MOOD_MULTIPLIER[mood]
     for task in tasks:
         task["duration"] = int(task["duration"] * multiplier)
 

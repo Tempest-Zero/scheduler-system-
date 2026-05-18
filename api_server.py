@@ -17,7 +17,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 # Graphiti
 from graphiti_client.resilient_client import resilient_client, patterns_to_constraints
-from graphiti_client.pattern_extractor import store_user_defaults, store_edit, extract_patterns
+from graphiti_client.pattern_extractor import store_user_defaults, extract_patterns
 
 # Solver
 solver_path = Path(__file__).parent / "or-tools-scheduler" / "or-tools-scheduler"
@@ -34,6 +34,10 @@ app.mount("/static", StaticFiles(directory=str(frontend_path)), name="static")
 
 # Session storage with thread safety (BUG-016 fix)
 extraction_sessions: dict = {}
+# Creation times are tracked separately because LangGraph drops any state
+# key that is not a declared channel - so the timestamp cannot ride along
+# inside the session dict through the extraction graph.
+session_created_at: dict = {}
 session_lock = Lock()
 SESSION_TTL_HOURS = 1  # Sessions expire after 1 hour (BUG-017 fix)
 
@@ -66,12 +70,10 @@ async def root():
 def _cleanup_expired_sessions():
     """Remove sessions older than SESSION_TTL_HOURS. Must be called within session_lock."""
     cutoff = datetime.now() - timedelta(hours=SESSION_TTL_HOURS)
-    expired = [
-        sid for sid, state in extraction_sessions.items()
-        if state.get("_created_at", datetime.min) < cutoff
-    ]
+    expired = [sid for sid, created in session_created_at.items() if created < cutoff]
     for sid in expired:
-        del extraction_sessions[sid]
+        extraction_sessions.pop(sid, None)
+        session_created_at.pop(sid, None)
     if expired:
         print(f"[CLEANUP] Removed {len(expired)} expired session(s)")
 
@@ -101,9 +103,9 @@ async def extract(req: ExtractRequest):
                     "validation_issues": [],
                     "attempt_count": 0,
                     "final_result": None,
-                    "_created_at": datetime.now()  # Track creation time
                 }
-            
+                session_created_at[session_id] = datetime.now()
+
             state = extraction_sessions[session_id].copy()  # Copy to avoid mutation
         
         state["messages"].append(HumanMessage(content=req.text))
@@ -159,8 +161,8 @@ async def extract(req: ExtractRequest):
         
         # Clean up session (thread-safe)
         with session_lock:
-            if session_id in extraction_sessions:
-                del extraction_sessions[session_id]
+            extraction_sessions.pop(session_id, None)
+            session_created_at.pop(session_id, None)
         
         # Transform tasks to frontend format
         tasks = []
@@ -328,10 +330,11 @@ async def patterns(user_id: str):
 @app.get("/api/health")
 async def health():
     """Health check endpoint."""
-    neo4j_available = resilient_client.is_available()
+    # Actively probe Neo4j instead of returning a possibly-stale flag.
+    await resilient_client.get_client()
     return {
         "status": "healthy",
-        "neo4j_available": neo4j_available
+        "neo4j_available": resilient_client.is_available()
     }
 
 

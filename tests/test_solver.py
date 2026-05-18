@@ -61,11 +61,13 @@ def test_blocks_never_overlap():
 
 
 def test_overflow_tasks_pushed_when_day_too_short():
-    # ~30h of work cannot fit a 9h day -> some tasks overflow.
-    tasks = [_task(f"T{i}", 4.0) for i in range(8)]
+    # Eight 1h tasks (inflated well past a 9h day) -> some fit, some overflow.
+    tasks = [_task(f"T{i}", 1.0) for i in range(8)]
     resp = generate_schedule(_request(tasks))
     assert resp.status == "partial"
     assert resp.overflow_tasks
+    # The tasks that did fit are still scheduled.
+    assert any(not _is_filler(b) for b in resp.schedule)
 
 
 def test_overlapping_fixed_slots_are_rejected():
@@ -136,6 +138,24 @@ def test_first_task_starts_soon_after_wake_on_light_day():
     assert real
     first_start = time_to_minutes(real[0].start_time)
     assert first_start - time_to_minutes("09:00") <= 60
+
+
+def test_oversized_single_task_is_infeasible_not_partial():
+    # A task far longer than the day cannot be scheduled; the result must be
+    # an honest "infeasible", never a "partial" with an empty schedule.
+    resp = generate_schedule(_request([_task("Marathon", 12.0, "high", "hard")]))
+    assert resp.status == "infeasible"
+    assert not [b for b in resp.schedule if not _is_filler(b)]
+
+
+def test_partial_schedule_actually_places_kept_tasks():
+    # Many tasks: the day overflows, but whatever is kept must really solve.
+    tasks = [_task(f"T{i}", 1.0) for i in range(10)]
+    resp = generate_schedule(_request(tasks))
+    assert resp.status in ("partial", "infeasible")
+    if resp.status == "partial":
+        kept = {b.task_name for b in resp.schedule if not _is_filler(b)}
+        assert kept and kept.isdisjoint(set(resp.overflow_tasks))
 
 
 def test_busy_day_still_spreads_tasks():

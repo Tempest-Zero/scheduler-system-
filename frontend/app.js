@@ -16,6 +16,14 @@ const scheduleSection = document.getElementById('scheduleSection');
 const scheduleDisplay = document.getElementById('scheduleDisplay');
 const feedbackSection = document.getElementById('feedbackSection');
 
+// Escape text before inserting into innerHTML. Task names and reasons come
+// from user input via an LLM, so they must never be trusted as markup.
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[ch]));
+}
+
 async function generateSchedule() {
     const text = rantInput.value.trim();
     if (!text) return;
@@ -105,7 +113,7 @@ function showFollowUp(message) {
             <strong>📋 Need a bit more info:</strong>
         </div>
         <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; margin-bottom: 10px;">
-            ${message.replace(/\n/g, '<br>').replace(/• /g, '<br>• ')}
+            ${escapeHtml(message).replace(/\n/g, '<br>').replace(/• /g, '<br>• ')}
         </div>
         <div style="font-size: 0.9em; color: #aaa;">
             👇 Type your answers below and click "Generate Schedule" again
@@ -136,12 +144,12 @@ function showExtractedTasks(data) {
     for (const task of data.tasks) {
         const vagueClass = task.is_vague ? 'vague' : '';
         html += `
-            <div class="task-card priority-${task.priority} ${vagueClass}">
+            <div class="task-card priority-${escapeHtml(task.priority)} ${vagueClass}">
                 <div class="task-info">
-                    <span class="task-name">${task.name}</span>
-                    <span class="task-meta">${task.hours}h | ${task.priority} | ${task.difficulty}</span>
+                    <span class="task-name">${escapeHtml(task.name)}</span>
+                    <span class="task-meta">${escapeHtml(task.hours)}h | ${escapeHtml(task.priority)} | ${escapeHtml(task.difficulty)}</span>
                 </div>
-                <span class="task-meta">Due: ${task.deadline}</span>
+                <span class="task-meta">Due: ${escapeHtml(task.deadline)}</span>
             </div>
         `;
     }
@@ -151,10 +159,10 @@ function showExtractedTasks(data) {
         html += `
             <div class="task-card fixed-slot">
                 <div class="task-info">
-                    <span class="task-name">${slot.name}</span>
+                    <span class="task-name">${escapeHtml(slot.name)}</span>
                     <span class="task-meta">Fixed</span>
                 </div>
-                <span class="task-meta">${slot.start} - ${slot.end}</span>
+                <span class="task-meta">${escapeHtml(slot.start)} - ${escapeHtml(slot.end)}</span>
             </div>
         `;
     }
@@ -181,16 +189,16 @@ function showSchedule(data) {
         html += `
             <div class="schedule-item">
                 <div class="time-block">
-                    ${item.start}<br>
-                    <small>${item.end}</small>
+                    ${escapeHtml(item.start)}<br>
+                    <small>${escapeHtml(item.end)}</small>
                 </div>
                 <div class="task-block">
                     <div>
-                        <div class="task-name">${item.task}</div>
-                        <div class="reason">${item.reason}</div>
+                        <div class="task-name">${escapeHtml(item.task)}</div>
+                        <div class="reason">${escapeHtml(item.reason)}</div>
                     </div>
                     <div class="task-actions">
-                        <button onclick="moveLater('${item.task}', '${item.start}')">Move Later</button>
+                        <button class="move-later-btn" data-task="${escapeHtml(item.task)}" data-start="${escapeHtml(item.start)}">Move Later</button>
                     </div>
                 </div>
             </div>
@@ -199,6 +207,15 @@ function showSchedule(data) {
 
     scheduleDisplay.innerHTML = html;
 }
+
+// Delegated handler: avoids inline onclick with string interpolation, which
+// breaks on task names containing quotes and is an injection vector.
+scheduleDisplay.addEventListener('click', (event) => {
+    const btn = event.target.closest('.move-later-btn');
+    if (btn) {
+        moveLater(btn.dataset.task, btn.dataset.start);
+    }
+});
 
 async function moveLater(taskName, currentTime) {
     const newTime = prompt(`Move "${taskName}" to what time? (e.g., 19:00)`);
