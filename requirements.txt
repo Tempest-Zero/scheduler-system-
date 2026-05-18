@@ -1,0 +1,18 @@
+# Pulse Scheduler dependencies
+
+# API & server
+fastapi==0.121.2
+uvicorn==0.38.0
+pydantic==2.12.4
+python-dotenv==1.2.1
+
+# Task 1 - NLP extraction (LangGraph + OpenAI)
+langgraph==1.0.5
+langchain-core==1.2.4
+langchain-openai==1.1.6
+
+# Task 2 - constraint solver
+ortools==9.14.6206
+
+# Task 3 - knowledge graph memory (Neo4j-backed)
+graphiti-core==0.24.3

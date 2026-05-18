@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pulse Scheduler</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>Pulse Scheduler</h1>
+            <p class="subtitle">Tell me about your day</p>
+        </header>
+
+        <main>
+            <!-- Input Section -->
+            <section class="input-section">
+                <div class="guidance">
+                    <p><strong>Helpful to include:</strong></p>
+                    <ul>
+                        <li>What time you wake up / wind down</li>
+                        <li>Tasks you need to complete (not what already happened)</li>
+                        <li>Rough time estimates</li>
+                        <li>Any fixed meetings or appointments</li>
+                    </ul>
+                    <p class="example">Example: "Tomorrow I wake up at 7, need to finish my report (~2hrs), hit the gym
+                        (1hr), and have a meeting at 2pm. I usually crash around 9pm."</p>
+                </div>
+
+                <textarea id="rantInput" placeholder="Tell me what you need to get done..."></textarea>
+                <button id="generateBtn" onclick="generateSchedule()">Generate Schedule</button>
+                <div id="followUp" class="follow-up hidden"></div>
+            </section>
+
+            <!-- Extracted Tasks -->
+            <section id="extractedSection" class="extracted-section hidden">
+                <h2>Extracted Tasks</h2>
+                <div id="timeWindow" class="time-window"></div>
+                <div id="extractedTasks"></div>
+            </section>
+
+            <!-- Schedule Section -->
+            <section id="scheduleSection" class="schedule-section hidden">
+                <h2>Your Schedule</h2>
+                <div id="scheduleDisplay"></div>
+            </section>
+
+            <!-- Feedback Section -->
+            <section id="feedbackSection" class="feedback-section hidden">
+                <h2>Feedback</h2>
+                <p>Click "Move Later" on any task to provide feedback</p>
+            </section>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+
+</html>

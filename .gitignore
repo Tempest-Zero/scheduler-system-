@@ -1,0 +1,16 @@
+# secrets
+.env
+.env.*
+
+# python junk
+__pycache__/
+*.pyc
+
+# venv
+.venv/
+venv/
+
+# misc
+.vscode/
+.DS_Store
+Thumbs.db
