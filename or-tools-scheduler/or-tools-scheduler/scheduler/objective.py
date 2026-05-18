@@ -48,8 +48,16 @@ def build_objective(model, tasks, starts, ends, penalties, day_end, morning_buff
         distribution_weight = 0  # Disable distribution penalty to allow clustering
     elif work_style == "spread_out":
         distribution_weight = 4  # Aggressively enforce spreading
-        
-    if n >= 2 and distribution_weight > 0:
+
+    # Only spread tasks when the day is full enough to need breathing room.
+    # On a light day, spreading drifts the first task toward mid-afternoon and
+    # leaves a huge empty morning; gating it off lets priority ordering pack
+    # tasks soon after wake instead.
+    total_duration = sum(t["duration"] for t in tasks)
+    fullness_threshold = 0.25 if work_style == "spread_out" else 0.6
+    day_is_full = total_duration >= available_window * fullness_threshold
+
+    if n >= 2 and distribution_weight > 0 and day_is_full:
         spacing = available_window // (n + 1)
         
         for i in range(n):

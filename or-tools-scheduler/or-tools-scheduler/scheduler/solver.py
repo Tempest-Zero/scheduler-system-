@@ -38,6 +38,12 @@ CONTEXT_SWITCH_BREAK = 10  # Then 10 minute break
 # Shutdown time - how many minutes before day end to stop scheduling
 SHUTDOWN_BUFFER = 60  # Stop scheduling 1 hour before day end
 
+# Filler-block caps - a wake-to-first-task or between-task gap longer than
+# these is split so the surplus shows as honest "Open Time" rather than an
+# absurdly long routine/break block.
+MAX_MORNING_ROUTINE_MINUTES = 45
+MAX_BREAK_MINUTES = 90
+
 
 def generate_schedule(request: ScheduleRequest, learned_constraints: dict = None) -> ScheduleResponse:
     """
@@ -244,24 +250,38 @@ def _build_schedule_blocks(solver, tasks, starts, ends, fixed_slots, day_start):
 
 
 def _inject_morning_routine(blocks: list, day_start: int) -> list:
-    """Add morning routine block at start of day."""
+    """Add morning routine block at start of day.
+
+    The routine block is capped at MAX_MORNING_ROUTINE_MINUTES; any surplus
+    gap before the first task is shown as flexible "Open Time".
+    """
     if not blocks:
         return blocks
-    
+
     # Morning routine: from day start to first task
     first_task_start = time_to_minutes(blocks[0].start_time)
-    morning_end = first_task_start
-    
-    if morning_end > day_start:
-        morning_block = ScheduledBlock(
-            task_name="🌅 Morning Routine",
-            start_time=minutes_to_time(0, day_start),  # Wake time
-            end_time=minutes_to_time(morning_end - day_start, day_start),
-            reason="Time for coffee, breakfast, and getting ready"
-        )
-        return [morning_block] + blocks
-    
-    return blocks
+    gap = first_task_start - day_start
+
+    if gap <= 0:
+        return blocks
+
+    routine_len = min(gap, MAX_MORNING_ROUTINE_MINUTES)
+    prefix = [ScheduledBlock(
+        task_name="🌅 Morning Routine",
+        start_time=minutes_to_time(day_start),
+        end_time=minutes_to_time(day_start + routine_len),
+        reason="Time for coffee, breakfast, and getting ready"
+    )]
+
+    if gap > routine_len:
+        prefix.append(ScheduledBlock(
+            task_name="🗓️ Open Time",
+            start_time=minutes_to_time(day_start + routine_len),
+            end_time=minutes_to_time(first_task_start),
+            reason="Flexible, unscheduled time before your first task"
+        ))
+
+    return prefix + blocks
 
 
 def _inject_breaks(blocks: list, day_start: int, min_break_minutes: int = 15) -> list:
@@ -290,13 +310,23 @@ def _inject_breaks(blocks: list, day_start: int, min_break_minutes: int = 15) ->
                 else:
                     break_name = "☕ Break"
                     break_reason = "Rest and reset before next task"
-                
+
+                # Cap the break; surplus becomes flexible "Open Time".
+                break_len = min(gap, MAX_BREAK_MINUTES)
                 result.append(ScheduledBlock(
                     task_name=break_name,
                     start_time=block.end_time,
-                    end_time=next_block.start_time,
+                    end_time=minutes_to_time(current_end + break_len),
                     reason=break_reason
                 ))
+
+                if gap > break_len:
+                    result.append(ScheduledBlock(
+                        task_name="🗓️ Open Time",
+                        start_time=minutes_to_time(current_end + break_len),
+                        end_time=next_block.start_time,
+                        reason="Flexible, unscheduled time"
+                    ))
     
     return result
 

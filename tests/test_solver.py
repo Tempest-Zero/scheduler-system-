@@ -3,9 +3,25 @@ from datetime import date
 
 import pytest
 
-from scheduler.solver import generate_schedule, _auto_insert_lunch
+from scheduler.solver import (
+    generate_schedule,
+    _auto_insert_lunch,
+    MAX_MORNING_ROUTINE_MINUTES,
+    MAX_BREAK_MINUTES,
+)
 from scheduler.models import ScheduleRequest, TaskInput, FixedSlot, UserPreferences
 from scheduler.utils import time_to_minutes
+
+# Injected filler blocks (routine / open time / breaks) vs. real task blocks.
+_FILLER_KEYWORDS = ("Routine", "Open Time", "Break")
+
+
+def _is_filler(block):
+    return any(kw in block.task_name for kw in _FILLER_KEYWORDS)
+
+
+def _duration(block):
+    return time_to_minutes(block.end_time) - time_to_minutes(block.start_time)
 
 
 def _task(name, hours, priority="medium", difficulty="medium"):
@@ -89,3 +105,46 @@ def test_fixed_slot_is_respected():
 def test_empty_task_list_does_not_crash():
     resp = generate_schedule(_request([]))
     assert resp.status in ("optimal", "feasible")
+
+
+def test_morning_routine_block_is_capped():
+    # A 2h task cannot fit before the auto-inserted noon lunch, so it lands
+    # in the afternoon -- the morning gap must not become a giant routine block.
+    resp = generate_schedule(_request([_task("Report", 2.0, "high", "hard")]))
+    routines = [b for b in resp.schedule if "Routine" in b.task_name]
+    assert routines
+    for block in routines:
+        assert _duration(block) <= MAX_MORNING_ROUTINE_MINUTES
+
+
+def test_break_blocks_are_capped():
+    resp = generate_schedule(
+        _request([_task("Report", 2.0, "high", "hard"), _task("Emails", 0.5, "low", "easy")])
+    )
+    breaks = [b for b in resp.schedule if "Break" in b.task_name]
+    for block in breaks:
+        assert _duration(block) <= MAX_BREAK_MINUTES
+
+
+def test_first_task_starts_soon_after_wake_on_light_day():
+    # On a light day the first real task should start near the morning buffer,
+    # not drift into the afternoon.
+    resp = generate_schedule(
+        _request([_task("Report", 2.0, "high", "hard"), _task("Emails", 0.5, "low", "easy")])
+    )
+    real = [b for b in resp.schedule if not _is_filler(b)]
+    assert real
+    first_start = time_to_minutes(real[0].start_time)
+    assert first_start - time_to_minutes("09:00") <= 60
+
+
+def test_busy_day_still_spreads_tasks():
+    # Six short tasks fill the day -- the schedule should span into the
+    # afternoon rather than bunching everything into the morning.
+    tasks = [_task(f"T{i}", 0.5) for i in range(6)]
+    resp = generate_schedule(_request(tasks))
+    assert resp.status in ("optimal", "feasible")
+    real = [b for b in resp.schedule if not _is_filler(b)]
+    assert len(real) == 6
+    last_end = max(time_to_minutes(b.end_time) for b in real)
+    assert last_end - time_to_minutes("09:00") >= 5 * 60
